@@ -1,0 +1,9 @@
+.venv/
+.python/
+.uv-cache/
+__pycache__/
+input/*
+output/*
+models/*
+verification/
+*.log
