@@ -14,17 +14,16 @@ docker compose up -d --build
 docker compose logs -f meter-ocr
 ```
 
-Контейнер публикует OCR на TCP-порту `12354`: главный проект обращается к
-`http://SERVER_IP:12354/ocr` с `multipart/form-data` и полем файла `file`; ответ —
+Контейнер публикует OCR только на `127.0.0.1:12354`; для внешнего доступа направьте
+на него отдельный HTTPS-домен через Caddy. Главный проект обращается к
+`https://ocr.poverka-bot.ru/ocr` с `multipart/form-data` и полем файла `file`; ответ —
 готовый JSON в контракте CLI. Перед запуском скопируйте `.env.example` в `.env` и
 создайте длинный случайный `OCR_API_KEY`. Каждый вызов `/ocr` обязан передавать этот
-ключ в заголовке `X-API-Key`. Порт использует обычный HTTP; если запросы будут идти
-через интернет, ограничьте входящий трафик firewall'ом IP-адресами доверенных клиентов
-либо разместите сервис за HTTPS-прокси.
+ключ в заголовке `X-API-Key`.
 
 ```bash
-curl -H "X-API-Key: $OCR_API_KEY" -F "file=@meter.jpg" http://SERVER_IP:12354/ocr
-curl http://SERVER_IP:12354/healthz
+curl -H "X-API-Key: $OCR_API_KEY" -F "file=@meter.jpg" https://ocr.poverka-bot.ru/ocr
+curl https://ocr.poverka-bot.ru/healthz
 ```
 
 При запуске контейнер загружает модели до перехода в состояние ready. Они сохраняются в

@@ -3,7 +3,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "12354:8000"
+      - "127.0.0.1:12354:8000"
     environment:
       OCR_API_KEY: ${OCR_API_KEY:?Set OCR_API_KEY in .env}
       OCR_WORKERS: "1"
