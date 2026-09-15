@@ -5,6 +5,81 @@ import cv2
 import numpy as np
 
 
+def _periodic_correlation(signal, lag):
+    """Return normalized correlation between a signal and its shifted copy."""
+    left, right = signal[..., :-lag], signal[..., lag:]
+    left = left - left.mean()
+    right = right - right.mean()
+    denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
+    return float((left * right).sum() / denominator) if denominator > 1e-6 else -1.0
+
+
+def _detect_achromatic_cells(image, items):
+    """Find a complete periodic row when all drums are achromatic.
+
+    This fallback deliberately uses the unexpanded OCR polygon: unlike the colour
+    path, it expects OCR to have found the complete digit row. Requiring agreement
+    between OCR digit count, geometric count and two image correlations prevents
+    ordinary long numbers from being accepted too easily.
+    """
+    proposals = []
+    for item in items:
+        digits_count = sum(character in "0123456789" for character in item["text"])
+        if digits_count < 5:
+            continue
+        polygon = np.asarray(item["polygon"], np.float32)
+        width = float(np.linalg.norm(polygon[1] - polygon[0]))
+        height = float(np.linalg.norm(polygon[3] - polygon[0]))
+        if width / max(height, 1) < 3.0 or height < image.shape[0] * .025:
+            continue
+        band = crop_cell(image, polygon)
+        h, w = band.shape[:2]
+        gray = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        central = gray[int(h*.12):max(int(h*.88), int(h*.12)+2)]
+        if central.shape[1] < 5:
+            continue
+        illumination = cv2.GaussianBlur(central, (0, 0), max(2.0, h*.25), 0)
+        high_pass = central - illumination
+        edges = np.abs(cv2.Sobel(central, cv2.CV_32F, 1, 0, ksize=3))
+        edges -= cv2.GaussianBlur(edges, (0, 0), max(2.0, h*.18), 0)
+        minimum_lag = max(8, round(h*.32))
+        maximum_lag = min(w//2-1, round(h*.95))
+        for lag in range(minimum_lag, maximum_lag + 1):
+            count_float = w / lag
+            count = round(count_float)
+            if not 5 <= count <= 15 or abs(count_float-count) > .28:
+                continue
+            if abs(digits_count-count) > 1:
+                continue
+            gray_correlation = _periodic_correlation(high_pass, lag)
+            edge_correlation = _periodic_correlation(edges, lag)
+            if gray_correlation < .24 and edge_correlation < .32:
+                continue
+            # A real drum row normally repeats in both brightness and vertical edges.
+            if gray_correlation < .12 or edge_correlation < .18:
+                continue
+            source = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]], np.float32)
+            inverse = cv2.getPerspectiveTransform(source, polygon)
+            cell_width = w / count
+            polygons = []
+            for index in range(count):
+                left = index * cell_width
+                right = (index + 1) * cell_width
+                rect = np.array([[left, h*.04], [right, h*.04],
+                                 [right, h*.96], [left, h*.96]], np.float32)
+                cell = cv2.perspectiveTransform(rect[None], inverse)[0]
+                if (cell[:, 0].min() < 0 or cell[:, 1].min() < 0 or
+                    cell[:, 0].max() >= image.shape[1] or cell[:, 1].max() >= image.shape[0]):
+                    polygons = []
+                    break
+                polygons.append(cell)
+            if polygons:
+                count_score = 1.0 - abs(count_float-count)/.28
+                score = max(gray_correlation, edge_correlation) + .35*min(gray_correlation, edge_correlation) + .15*count_score
+                proposals.append((score, polygons))
+    return max(proposals, key=lambda proposal: proposal[0])[1] if proposals else []
+
+
 def detect_cells(image, items):
     """Locate periodic drum windows, anchored by three red fractional drums.
 
@@ -13,13 +88,20 @@ def detect_cells(image, items):
     """
     from itertools import combinations
     proposals = []
+    geometry_only_proposals = []
     for item in items:
         p = np.asarray(item["polygon"], np.float32)
         width = float(np.linalg.norm(p[1] - p[0]))
         height = float(np.linalg.norm(p[3] - p[0]))
         if width / max(height, 1) < 2.5 or height < image.shape[0] * .025:
             continue
-        if sum(c in "0123456789" for c in item["text"]) < 3:
+        digits_count = sum(c in "0123456789" for c in item["text"])
+        geometry_only = digits_count < 3
+        # PaddleOCR occasionally sees a complete, strongly tilted drum row as
+        # one letter. Permit such a candidate only under strict geometric rules.
+        if geometry_only and not (len(item["text"].strip()) <= 2 and
+                                  width / max(height, 1) >= 3.0 and
+                                  height >= image.shape[0] * .08):
             continue
         # The raw detector may omit the red digits; search beyond its right edge.
         vector = p[1] - p[0]
@@ -84,9 +166,15 @@ def detect_cells(image, items):
             if len(polygons) != len(centres):
                 continue
             strength = float(min(profile[x] for x in triple))
+            if geometry_only and (black_count != 5 or correlation < .60 or strength < 8.0):
+                continue
             score = correlation * strength * height
-            proposals.append((score, polygons))
-    return max(proposals, key=lambda x:x[0])[1] if proposals else []
+            (geometry_only_proposals if geometry_only else proposals).append((score, polygons))
+    if proposals:
+        return max(proposals, key=lambda x:x[0])[1]
+    if geometry_only_proposals:
+        return max(geometry_only_proposals, key=lambda x:x[0])[1]
+    return _detect_achromatic_cells(image, items)
 
 
 def crop_cell(image, polygon):
@@ -116,11 +204,14 @@ def recognize_reading(image, recognizer, items):
             inner = crop[int(h*.08):int(h*.92), int(w*trim):int(w*(1-trim))]
             gray = cv2.cvtColor(inner, cv2.COLOR_BGR2GRAY)
             threshold, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
-            # Red ink is separated from tinted backgrounds for fractional cells.
+            # Use colour separation only when red ink is actually present. Fully
+            # black counters keep the ordinary Otsu mask for every position.
             if len(cells) >= len(polygons)-3:
                 blue, green, red = cv2.split(inner.astype(float))
                 chroma = (red-green)/(red+green+1)
-                mask = ((chroma > np.median(chroma)+.025)*255).astype(np.uint8)
+                median_chroma = float(np.median(chroma))
+                if float(np.percentile(chroma, 95)) - median_chroma > .025:
+                    mask = ((chroma > median_chroma+.025)*255).astype(np.uint8)
             count, labels, stats, centres = cv2.connectedComponentsWithStats(mask)
             choices = []
             for label in range(1, count):

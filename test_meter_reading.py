@@ -59,6 +59,19 @@ class ReadingTests(unittest.TestCase):
             item={'text':'88888','polygon':[[65,112],[70+count*65,112],[70+count*65,225],[65,225]]}
             self.assertEqual(len(detect_cells(image,[item])),count)
 
+    def test_achromatic_row(self):
+        count = 8
+        image = np.full((400, 1000, 3), 220, np.uint8)
+        for i in range(count):
+            x = 70 + i*65
+            cv2.rectangle(image, (x,120), (x+53,215), (245,245,245), -1)
+            cv2.rectangle(image, (x,120), (x+53,215), (80,80,80), 2)
+            cv2.putText(image, str(i), (x+7,195), cv2.FONT_HERSHEY_SIMPLEX,
+                        2.0, (15,15,15), 3)
+        item = {'text':'01234567',
+                'polygon':[[70,120],[70+count*65,120],[70+count*65,215],[70,215]]}
+        self.assertEqual(len(detect_cells(image, [item])), count)
+
 
 if __name__ == '__main__':
     unittest.main()
