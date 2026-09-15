@@ -5,6 +5,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
+import logging
 import os
 from pathlib import PurePath
 import secrets
@@ -57,6 +58,7 @@ class OCRService:
                 self.digit_error = str(exc)
         except Exception as exc:
             self.initialization_error = str(exc) or type(exc).__name__
+            logging.exception("OCR model initialization failed")
 
     @property
     def ready(self) -> bool:
