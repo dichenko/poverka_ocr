@@ -8,3 +8,5 @@ models/*
 verification/
 *.log
 .env
+.env.*
+!.env.example

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 import os
 from pathlib import PurePath
+import secrets
 import threading
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -28,6 +29,7 @@ def _positive_int(name: str, default: int) -> int:
 MAX_UPLOAD_BYTES = _positive_int("MAX_UPLOAD_BYTES", 15 * 1024 * 1024)
 OCR_WORKERS = _positive_int("OCR_WORKERS", 1)
 MAX_INFLIGHT_REQUESTS = _positive_int("MAX_INFLIGHT_REQUESTS", 100)
+OCR_API_KEY = os.getenv("OCR_API_KEY", "")
 
 
 class OCRService:
@@ -98,6 +100,9 @@ def healthz():
 
 @app.post("/ocr")
 async def recognize(request: Request, file: UploadFile = File(...)):
+    supplied_key = request.headers.get("X-API-Key", "")
+    if not OCR_API_KEY or not secrets.compare_digest(supplied_key, OCR_API_KEY):
+        raise HTTPException(status_code=401, detail="Invalid OCR API key")
     filename = PurePath((file.filename or "upload").replace("\\", "/")).name
     if not filename.lower().endswith(tuple(main.EXTENSIONS)):
         raise HTTPException(status_code=415, detail="Supported formats: jpg, jpeg, png, webp, bmp")
