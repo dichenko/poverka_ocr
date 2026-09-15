@@ -1,0 +1,14 @@
+.git
+.venv
+.python
+.uv-cache
+__pycache__
+input
+output
+models
+verification
+*.log
+*.bat
+README.md
+TEST_REPORT.md
+test_*.py

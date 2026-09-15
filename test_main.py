@@ -57,6 +57,13 @@ class OCRTests(unittest.TestCase):
         self.assertEqual(json.loads(output.read_text(encoding="utf-8")), data)
         self.assertIn("СЧЁТЧИК", output.read_text(encoding="utf-8"))
 
+    def test_in_memory_upload_has_the_same_contract(self):
+        data = main.process_image_bytes(self.photo.read_bytes(), "upload.png", FakeEngine(),
+                                        {"version": "test"})
+        self.assertEqual(data["source_file"], "upload.png")
+        self.assertEqual(data["status"], "success")
+        self.assertEqual(data["image"], {"width": 80, "height": 60})
+
     def test_errors_and_empty(self):
         broken = self.root / "broken.jpg"
         broken.write_bytes(b"not a photo")

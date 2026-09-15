@@ -1,0 +1,21 @@
+services:
+  meter-ocr:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      OCR_WORKERS: "1"
+      MAX_INFLIGHT_REQUESTS: "100"
+      MAX_UPLOAD_BYTES: "15728640"
+    volumes:
+      - paddle-models:/app/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 5m
+
+volumes:
+  paddle-models:

@@ -7,3 +7,4 @@ output/*
 models/*
 verification/
 *.log
+.env

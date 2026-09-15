@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from io import BytesIO
 from collections import Counter
 from contextlib import redirect_stdout
 from importlib.metadata import PackageNotFoundError, version
@@ -31,16 +32,21 @@ def get_image_files(folder: Path) -> list[Path]:
                    and p.suffix.lower() in EXTENSIONS), key=lambda p: p.name.casefold())
 
 
-def load_image(path: Path) -> np.ndarray:
+def load_image(source) -> np.ndarray:
     """Return contiguous BGR at EXIF-corrected resolution, without resizing."""
-    with Image.open(path) as source:
-        corrected = ImageOps.exif_transpose(source)
+    with Image.open(source) as opened:
+        corrected = ImageOps.exif_transpose(opened)
         if corrected.mode in ("RGBA", "LA", "P"):
             rgba = corrected.convert("RGBA")
             background = Image.new("RGBA", rgba.size, "white")
             corrected = Image.alpha_composite(background, rgba)
         rgb = np.asarray(corrected.convert("RGB"))
         return np.ascontiguousarray(rgb[:, :, ::-1])
+
+
+def load_image_bytes(content: bytes) -> np.ndarray:
+    """Decode an uploaded image without persisting it to disk."""
+    return load_image(BytesIO(content))
 
 
 def create_engine():
@@ -122,16 +128,16 @@ def save_json(path: Path, data: dict) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def process_image(path: Path, engine, engine_info: dict, initialization_error=None,
-                  digit_recognizer=None, digit_error=None) -> dict:
+def _process_image(source, source_file: str, engine, engine_info: dict, initialization_error=None,
+                   digit_recognizer=None, digit_error=None) -> dict:
     started = perf_counter()
-    data = {"source_file": path.name, "status": "error", "image": None,
+    data = {"source_file": source_file, "status": "error", "image": None,
             "ocr_engine": dict(engine_info), "full_text": [], "items": [],
             "items_count": 0, "processing_ms": 0, "error": None,
             "meter_reading": empty_reading("unavailable")}
     phase = "ImageReadError"
     try:
-        image = load_image(path)
+        image = load_image(source)
         data["image"] = {"width": int(image.shape[1]), "height": int(image.shape[0])}
         phase = "OCRInitializationError" if initialization_error else "OCRError"
         if initialization_error:
@@ -151,6 +157,19 @@ def process_image(path: Path, engine, engine_info: dict, initialization_error=No
         data["error"] = {"type": phase, "message": str(exc)[:1500] or type(exc).__name__}
     data["processing_ms"] = round((perf_counter() - started) * 1000)
     return data
+
+
+def process_image(path: Path, engine, engine_info: dict, initialization_error=None,
+                  digit_recognizer=None, digit_error=None) -> dict:
+    return _process_image(path, path.name, engine, engine_info, initialization_error,
+                          digit_recognizer, digit_error)
+
+
+def process_image_bytes(content: bytes, source_file: str, engine, engine_info: dict,
+                        initialization_error=None, digit_recognizer=None, digit_error=None) -> dict:
+    """Run the existing OCR pipeline for an HTTP upload, entirely in memory."""
+    return _process_image(BytesIO(content), source_file, engine, engine_info,
+                          initialization_error, digit_recognizer, digit_error)
 
 
 def main(argv=None) -> int:
