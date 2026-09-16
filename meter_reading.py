@@ -23,7 +23,14 @@ def _detect_achromatic_cells(image, items):
     ordinary long numbers from being accepted too easily.
     """
     proposals = []
-    for item in items:
+    # A decimal separator in a long numeric OCR token is a very strong cue for
+    # the counter window.  In particular, it keeps a clearly read value from
+    # losing to the (also periodic) serial number printed lower on the body.
+    decimal_numeric_items = [item for item in items
+                             if any(mark in item["text"] for mark in ".,")
+                             and sum(char in "0123456789" for char in item["text"]) >= 5]
+    candidates = decimal_numeric_items or items
+    for item in candidates:
         digits_count = sum(character in "0123456789" for character in item["text"])
         if digits_count < 5:
             continue
@@ -77,7 +84,30 @@ def _detect_achromatic_cells(image, items):
                 count_score = 1.0 - abs(count_float-count)/.28
                 score = max(gray_correlation, edge_correlation) + .35*min(gray_correlation, edge_correlation) + .15*count_score
                 proposals.append((score, polygons))
-    return max(proposals, key=lambda proposal: proposal[0])[1] if proposals else []
+    if proposals:
+        return max(proposals, key=lambda proposal: proposal[0])[1]
+    # OCR can already outline a clean value while the weak separators between
+    # its black drums are invisible to the periodicity test.  A decimal numeric
+    # token is specific enough to use its own evenly spaced cells as a final
+    # fallback; this path is intentionally unavailable to serial-number text.
+    for item in decimal_numeric_items:
+        count = sum(character in "0123456789" for character in item["text"])
+        if not 5 <= count <= 12:
+            continue
+        polygon = np.asarray(item["polygon"], np.float32)
+        source_width = max(8, round(np.linalg.norm(polygon[1] - polygon[0])))
+        source_height = max(8, round(np.linalg.norm(polygon[3] - polygon[0])))
+        source = np.array([[0, 0], [source_width - 1, 0],
+                           [source_width - 1, source_height - 1], [0, source_height - 1]], np.float32)
+        inverse = cv2.getPerspectiveTransform(source, polygon)
+        cells = []
+        for index in range(count):
+            left, right = index * source_width / count, (index + 1) * source_width / count
+            rect = np.array([[left, source_height * .04], [right, source_height * .04],
+                             [right, source_height * .96], [left, source_height * .96]], np.float32)
+            cells.append(cv2.perspectiveTransform(rect[None], inverse)[0])
+        return cells
+    return []
 
 
 def detect_cells(image, items):

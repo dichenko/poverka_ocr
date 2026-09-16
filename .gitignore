@@ -1,4 +1,5 @@
 .venv/
+.venv-reader/
 .python/
 .uv-cache/
 __pycache__/
@@ -6,6 +7,9 @@ input/*
 output/*
 models/*
 verification/
+reading_test_output/
+reading_experiments/
+reading_run_output/
 *.log
 .env
 .env.*

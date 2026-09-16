@@ -15,6 +15,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 import main
+from counter_reader import CounterReader
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -39,8 +40,8 @@ class OCRService:
     def __init__(self) -> None:
         self._slots = threading.BoundedSemaphore(MAX_INFLIGHT_REQUESTS)
         self._executor = ThreadPoolExecutor(max_workers=OCR_WORKERS, thread_name_prefix="ocr")
-        self.engine = self.digit_recognizer = None
-        self.initialization_error = self.digit_error = None
+        self.engine = self.digit_recognizer = self.counter_reader = None
+        self.initialization_error = self.digit_error = self.counter_error = None
         try:
             installed_version = version("paddleocr")
         except PackageNotFoundError:
@@ -56,6 +57,13 @@ class OCRService:
                 self.digit_recognizer = main.create_digit_recognizer()
             except Exception as exc:  # General OCR can still serve responses.
                 self.digit_error = str(exc)
+            try:
+                # On first Docker start the file is downloaded into /app/models;
+                # the existing named volume makes later restarts offline.
+                self.counter_reader = CounterReader(main.ROOT / "models" / "easyocr",
+                                                    download_models=True)
+            except Exception as exc:  # General OCR can still serve responses.
+                self.counter_error = str(exc)
         except Exception as exc:
             self.initialization_error = str(exc) or type(exc).__name__
             logging.exception("OCR model initialization failed")
@@ -70,6 +78,7 @@ class OCRService:
         future = self._executor.submit(
             main.process_image_bytes, content, filename, self.engine, self.engine_info,
             self.initialization_error, self.digit_recognizer, self.digit_error,
+            self.counter_reader, self.counter_error,
         )
         future.add_done_callback(lambda _: self._slots.release())
         return future
@@ -117,7 +126,7 @@ async def recognize(request: Request, file: UploadFile = File(...)):
     if future is None:
         raise HTTPException(status_code=429, detail="OCR queue is full; retry later", headers={"Retry-After": "5"})
     try:
-        return await asyncio.wrap_future(future)
+        return main.compact_api_response(await asyncio.wrap_future(future))
     except asyncio.CancelledError:
         # The inference continues safely in its worker; its slot is released by the callback.
         raise

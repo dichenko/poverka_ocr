@@ -18,7 +18,8 @@ import warnings
 
 import numpy as np
 from PIL import Image, ImageOps
-from meter_reading import empty_reading, recognize_reading
+from meter_reading import empty_reading
+from counter_reader import CounterReader, locate_counter_rows
 
 ROOT = Path(__file__).resolve().parent
 DETECTION_MODEL = "PP-OCRv5_mobile_det"
@@ -129,7 +130,7 @@ def save_json(path: Path, data: dict) -> None:
 
 
 def _process_image(source, source_file: str, engine, engine_info: dict, initialization_error=None,
-                   digit_recognizer=None, digit_error=None) -> dict:
+                   digit_recognizer=None, digit_error=None, counter_reader=None, counter_error=None) -> dict:
     started = perf_counter()
     data = {"source_file": source_file, "status": "error", "image": None,
             "ocr_engine": dict(engine_info), "full_text": [], "items": [],
@@ -146,11 +147,13 @@ def _process_image(source, source_file: str, engine, engine_info: dict, initiali
         data.update(status="success", items=items, items_count=len(items),
                     full_text=[item["text"] for item in items])
         try:
-            if digit_error:
-                raise RuntimeError(digit_error)
-            if digit_recognizer is not None:
-                data["meter_reading"] = recognize_reading(image, digit_recognizer, items)
-                data["meter_reading"]["model"] = DIGIT_MODEL
+            if counter_error:
+                raise RuntimeError(counter_error)
+            if counter_reader is not None:
+                seeds = locate_counter_rows(image, items, digit_recognizer)
+                data["meter_reading"] = counter_reader.read(image, seeds)
+                data["meter_reading"]["model"] = "EasyOCR english_g2"
+                data["meter_reading"]["localizer_model"] = DIGIT_MODEL
         except Exception as exc:
             data["meter_reading"] = empty_reading("error", str(exc)[:1500])
     except Exception as exc:
@@ -160,16 +163,33 @@ def _process_image(source, source_file: str, engine, engine_info: dict, initiali
 
 
 def process_image(path: Path, engine, engine_info: dict, initialization_error=None,
-                  digit_recognizer=None, digit_error=None) -> dict:
+                  digit_recognizer=None, digit_error=None, counter_reader=None, counter_error=None) -> dict:
     return _process_image(path, path.name, engine, engine_info, initialization_error,
-                          digit_recognizer, digit_error)
+                          digit_recognizer, digit_error, counter_reader, counter_error)
 
 
 def process_image_bytes(content: bytes, source_file: str, engine, engine_info: dict,
-                        initialization_error=None, digit_recognizer=None, digit_error=None) -> dict:
+                        initialization_error=None, digit_recognizer=None, digit_error=None,
+                        counter_reader=None, counter_error=None) -> dict:
     """Run the existing OCR pipeline for an HTTP upload, entirely in memory."""
     return _process_image(BytesIO(content), source_file, engine, engine_info,
-                          initialization_error, digit_recognizer, digit_error)
+                          initialization_error, digit_recognizer, digit_error, counter_reader, counter_error)
+
+
+def compact_api_response(data: dict) -> dict:
+    """Return the intentionally small public HTTP contract.
+
+    The detailed OCR result is retained internally for CLI diagnostics, while
+    the API exposes only useful text fragments and the meter value.
+    """
+    ocr=[]
+    for item in data.get("items", []):
+        text=str(item.get("text", "")).strip()
+        if not text or "=" in text or (len(text) == 1 and text.isalpha()):
+            continue
+        ocr.append(text)
+    reading=data.get("meter_reading") or {}
+    return {"ocr": ocr, "meter_reading": reading.get("value")}
 
 
 def main(argv=None) -> int:
@@ -201,6 +221,7 @@ def main(argv=None) -> int:
             "model": RECOGNITION_MODEL, "detection_model": DETECTION_MODEL}
     engine, initialization_error = None, None
     digit_recognizer, digit_error = None, None
+    counter_reader, counter_error = None, None
     if pending:
         print("Загрузка PaddleOCR (первый запуск может скачать модели)...", flush=True)
         try:
@@ -211,6 +232,10 @@ def main(argv=None) -> int:
                         digit_recognizer = create_digit_recognizer()
                     except Exception as exc:
                         digit_error = str(exc)
+                    try:
+                        counter_reader = CounterReader(ROOT / "models" / "easyocr", download_models=True)
+                    except Exception as exc:
+                        counter_error = str(exc)
             print("Загружена модель PaddleOCR", flush=True)
         except Exception as exc:
             initialization_error = str(exc) or type(exc).__name__
@@ -223,7 +248,8 @@ def main(argv=None) -> int:
             skipped += 1
             print(f"{prefix} — пропущено", flush=True)
             continue
-        data = process_image(path, engine, info, initialization_error, digit_recognizer, digit_error)
+        data = process_image(path, engine, info, initialization_error, digit_recognizer, digit_error,
+                             counter_reader, counter_error)
         try:
             save_json(target, data)
         except OSError as exc:

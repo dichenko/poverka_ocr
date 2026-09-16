@@ -64,6 +64,41 @@ class OCRTests(unittest.TestCase):
         self.assertEqual(data["status"], "success")
         self.assertEqual(data["image"], {"width": 80, "height": 60})
 
+    def test_new_counter_reader_preserves_general_ocr_contract(self):
+        class Reader:
+            def read(self, image, seeds):
+                self.seeds = seeds
+                return {'value': '00123.456', 'status': 'recognized', 'cells': [],
+                        'decimal_places': 3, 'digits_count': 8, 'error': None}
+        reader = Reader()
+        seeds = [{'kind': 'polygon', 'polygon': [[1, 1], [2, 1], [2, 2], [1, 2]],
+                  'width': 1.0, 'height': 1.0}]
+        with patch.object(main, 'locate_counter_rows', return_value=seeds) as locator:
+            result = main.process_image(self.photo, FakeEngine(), {'version': 'test'},
+                                        digit_recognizer=object(), counter_reader=reader)
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['full_text'], ['СЧЁТЧИК', '№ A-123/45'])
+        self.assertEqual(result['meter_reading']['value'], '00123.456')
+        self.assertEqual(result['meter_reading']['model'], 'EasyOCR english_g2')
+        locator.assert_called_once()
+        self.assertEqual(reader.seeds, seeds)
+
+    def test_compact_api_response_filters_noise_and_metadata(self):
+        data = {
+            "items": [
+                {"text": "СЧЁТЧИК"}, {"text": "A"}, {"text": "Я"},
+                {"text": "Q=1,5"}, {"text": "  00123.456  "}, {"text": "7"},
+            ],
+            "meter_reading": {"value": "00123.456", "status": "recognized", "cells": [1]},
+            "error": {"message": "hidden"},
+        }
+        self.assertEqual(main.compact_api_response(data), {
+            "ocr": ["СЧЁТЧИК", "00123.456", "7"],
+            "meter_reading": "00123.456",
+        })
+        self.assertEqual(main.compact_api_response({"items": [], "meter_reading": {"value": None}}),
+                         {"ocr": [], "meter_reading": None})
+
     def test_errors_and_empty(self):
         broken = self.root / "broken.jpg"
         broken.write_bytes(b"not a photo")

@@ -41,8 +41,11 @@ class ReadingTests(unittest.TestCase):
     def test_reading_failure_keeps_raw_ocr(self):
         import main
         from test_main import FakeEngine
-        with patch.object(main, 'load_image', return_value=np.full((100,300,3),255,np.uint8)), patch.object(main, 'recognize_reading', side_effect=RuntimeError('test')):
-            result = main.process_image(__import__('pathlib').Path('photo.png'), FakeEngine(), {}, digit_recognizer=object())
+        failing_reader = type('FailingReader', (), {'read': lambda *_: (_ for _ in ()).throw(RuntimeError('test'))})()
+        with patch.object(main, 'load_image', return_value=np.full((100,300,3),255,np.uint8)), \
+             patch.object(main, 'locate_counter_rows', return_value=[]):
+            result = main.process_image(__import__('pathlib').Path('photo.png'), FakeEngine(), {},
+                                        digit_recognizer=object(), counter_reader=failing_reader)
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['items_count'], 2)
         self.assertEqual(result['meter_reading']['status'], 'error')

@@ -1,0 +1,5 @@
+# Install the CPU torch/torchvision wheels first (see README.md).
+easyocr==1.7.2
+numpy==2.4.6
+opencv-python-headless==5.0.0.93
+Pillow==12.3.0
