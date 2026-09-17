@@ -10,7 +10,7 @@ from main import create_engine,load_image,run_ocr,normalize_ocr_result
 from counter_reader import locate_counter_rows
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--input',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
+    parser=argparse.ArgumentParser();parser.add_argument('--input',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--only')
     args=parser.parse_args()
     with redirect_stdout(sys.stderr):
         engine=create_engine()
@@ -19,6 +19,7 @@ if __name__=='__main__':
         result={}
         for f in sorted(args.input.iterdir()):
             if f.suffix.lower() not in {'.jpg','.jpeg','.png','.webp','.bmp'}:continue
+            if args.only and f.name != args.only:continue
             try:
                 image=load_image(f)
                 result[f.name]=locate_counter_rows(image,normalize_ocr_result(run_ocr(engine,image)),rec)

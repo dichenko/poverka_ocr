@@ -19,7 +19,8 @@ import warnings
 import numpy as np
 from PIL import Image, ImageOps
 from meter_reading import empty_reading
-from counter_reader import CounterReader, locate_counter_rows
+from counter_reader import locate_counter_rows
+from experimental_counter_reader import DisplayCounterReader as CounterReader
 
 ROOT = Path(__file__).resolve().parent
 DETECTION_MODEL = "PP-OCRv5_mobile_det"

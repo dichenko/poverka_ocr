@@ -6,7 +6,7 @@ from counter_vision import angles,proposals,rotate,grids,clean
 from meter_reading import crop_cell,empty_reading
 
 def vote(observations):
-    strong={t for t,c in observations if len(t)==1 and t.isdigit() and c>=.9}
+    strong={t for t,c in observations if len(t)==1 and t.isdigit() and c>=.75}
     if len(strong)!=1:return 'X',None
     digit=next(iter(strong));support=[c for t,c in observations if t==digit and c>=.35]
     if len(support)<2:return 'X',None

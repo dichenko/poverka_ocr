@@ -95,6 +95,7 @@ def main(argv=None) -> int:
     parser.add_argument("--seed-python", type=Path, default=ROOT / ".venv" / "Scripts" / "python.exe",
                         help="Python с установленным PaddleOCR для поиска строки")
     parser.add_argument("--integer-digits", type=int, default=5)
+    parser.add_argument("--only", type=str, help="Обработать один файл по имени из input")
     args = parser.parse_args(argv)
     if args.integer_digits < 1:
         parser.error("--integer-digits должен быть положительным")
@@ -102,6 +103,10 @@ def main(argv=None) -> int:
         parser.error(f"Нет папки: {args.input}")
     files = sorted((p for p in args.input.iterdir() if p.suffix.lower() in EXTENSIONS),
                    key=lambda path: path.name.casefold())
+    if args.only:
+        files = [path for path in files if path.name == args.only]
+        if not files:
+            parser.error(f"Нет изображения {args.only} в папке: {args.input}")
     if not files:
         parser.error(f"В папке нет изображений: {args.input}")
     labels = {}
@@ -118,9 +123,9 @@ def main(argv=None) -> int:
     seeds = None
     if args.backend == "grayscale":
         try:
-            from counter_reader import CounterReader
-            reader = CounterReader(ROOT / "models" / "easyocr", args.integer_digits,
-                                   download_models=True)
+            from experimental_counter_reader import DisplayCounterReader
+            reader = DisplayCounterReader(ROOT / "models" / "easyocr", args.integer_digits,
+                                          download_models=True)
             digit_recognizer = create_digit_recognizer()
         except (ImportError, FileNotFoundError) as exc:
             parser.error(f"Не готово окружение распознавания: {exc}. См. README; запускайте test_readings.bat")
@@ -130,7 +135,8 @@ def main(argv=None) -> int:
         with (args.debug_dir / "localization.log").open("w", encoding="utf8") as log:
             completed = subprocess.run([str(args.seed_python.resolve()), "-X", "utf8",
                 str(ROOT / "reading_seeds.py"), "--input", str(args.input.resolve()),
-                "--output", str(proposals_file.resolve())], cwd=ROOT, stdout=log, stderr=log)
+                "--output", str(proposals_file.resolve())] +
+                (["--only", args.only] if args.only else []), cwd=ROOT, stdout=log, stderr=log)
         if completed.returncode:
             parser.error(f"Ошибка поиска строки: см. {args.debug_dir / 'localization.log'}")
         seeds = json.loads(proposals_file.read_text(encoding="utf8"))

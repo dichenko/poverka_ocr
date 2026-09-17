@@ -15,7 +15,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 import main
-from counter_reader import CounterReader
+from experimental_counter_reader import DisplayCounterReader as CounterReader
 
 
 def _positive_int(name: str, default: int) -> int:

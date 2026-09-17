@@ -9,6 +9,7 @@ import numpy as np
 from counter_reader import (CounterReader, combine_votes, locate_counter_rows,
                             paddle_vote, vote, vote_strength)
 from counter_vision import angles, clean, grids, rotate
+from experimental_counter_reader import direct_digit_windows
 from test_readings_only import compare_reading, expected_from_name
 
 
@@ -40,8 +41,8 @@ class CounterTests(unittest.TestCase):
         self.assertGreater(vote_strength(alternate, '6'), vote_strength(primary, '4'))
         self.assertEqual(combine_votes(('4', .941), ('6', .933), primary, alternate), ('6', .933))
 
-    def test_weak_or_multichar_predictions_are_unknown(self):
-        self.assertEqual(vote([('7', .8)] * 3)[0], 'X')
+    def test_repeated_moderate_or_multichar_predictions(self):
+        self.assertEqual(vote([('7', .8)] * 3)[0], '7')
         self.assertEqual(vote([('17', .999)] * 3)[0], 'X')
 
     def test_missing_leading_wheels_are_counted(self):
@@ -82,6 +83,16 @@ class CounterTests(unittest.TestCase):
             self.assertIn(0, angles(image))
         with patch('counter_vision.cv2.HoughLinesP', return_value=lines[:, None, :]):
             self.assertIn(0, angles(image))
+
+    def test_direct_digit_windows_prefers_a_regular_large_row(self):
+        image = np.full((600, 1000, 3), 255, np.uint8)
+        for index in range(8):
+            cv2.rectangle(image, (60 + index * 90, 200),
+                          (110 + index * 90, 290), (0, 0, 0), -1)
+        boxes = direct_digit_windows(image, 8)
+        self.assertEqual(len(boxes), 8)
+        self.assertEqual(boxes[0][0], 60)
+        self.assertEqual(boxes[-1][2], 741)
 
     def test_no_proposal_does_not_fabricate_digits(self):
         reader = CounterReader.__new__(CounterReader)
