@@ -13,6 +13,53 @@ def vote(observations):
     return digit,float(max(support))
 
 
+_PADDLE_EQUIVALENTS={'O':'0','D':'0','I':'1','L':'1','H':'1','Z':'2','S':'5','B':'8'}
+
+
+def _paddle_digit(text):
+    """Keep a single digit and common glyph aliases from PaddleOCR output."""
+    value=''.join(_PADDLE_EQUIVALENTS.get(char.upper(),char)
+                  for char in str(text).strip()
+                  if char.isdigit() or char.upper() in _PADDLE_EQUIVALENTS)
+    return value if len(value) == 1 and value.isdigit() else None
+
+
+def paddle_vote(observations):
+    """Conservative vote for the specialised Paddle digit recognizer.
+
+    PaddleOCR is used only as an independent fallback on single slots.  A
+    digit needs either two preprocessing variants or a very strong single
+    result, so it cannot turn a weak random letter into a reading.
+    """
+    grouped={}
+    for text,confidence in observations:
+        digit=_paddle_digit(text)
+        if digit is not None:
+            grouped.setdefault(digit,[]).append(float(confidence))
+    accepted=[]
+    for digit,confidence in grouped.items():
+        confidence.sort(reverse=True)
+        if (len(confidence) >= 2 and confidence[0] >= .55) or confidence[0] >= .95:
+            accepted.append((confidence[0],sum(confidence[:2]),digit))
+    if not accepted:
+        return 'X',None
+    confidence,_,digit=max(accepted)
+    return digit,float(confidence)
+
+
+def _cell_records(digits, observations_by_source, inverse, x, pitch, y0, y1):
+    cells=[]
+    for i,(digit,confidence) in enumerate(digits):
+        rect=np.array([[x+i*pitch,y0],[x+(i+1)*pitch,y0],
+                       [x+(i+1)*pitch,y1],[x+i*pitch,y1]],np.float32)
+        polygon=cv2.perspectiveTransform(rect[None],inverse)[0]
+        cells.append(dict(digit=digit,confidence=confidence,polygon=polygon.tolist(),
+            ocr_candidates=[dict(text=text,confidence=score,preprocessing=source)
+                            for source,observations in observations_by_source.items()
+                            for text,score in observations[i]]))
+    return cells
+
+
 def vote_strength(observations, digit):
     """Strength of repeated evidence for one already-confirmed digit."""
     values=sorted((confidence for text,confidence in observations
@@ -93,7 +140,7 @@ class CounterReader:
             download_enabled=download_models,verbose=False)
         self.integer_digits=integer_digits;self.decimal_places=decimal_places
 
-    def read(self,image,seeds,debug=None):
+    def read(self,image,seeds,digit_recognizer=None,debug=None):
         count=self.integer_digits+self.decimal_places
         image=cv2.cvtColor(cv2.cvtColor(image,cv2.COLOR_BGR2GRAY),cv2.COLOR_GRAY2BGR)
         evaluated=[]
@@ -130,17 +177,36 @@ class CounterReader:
                 # The final wheel is especially prone to rollover. Accept it only
                 # when independent threshold methods agree with strong evidence.
                 if modes['adaptive'][-1][0]!=modes['otsu'][-1][0]:digits[-1]=('X',None)
-                cells=[]
-                for i,(d,c) in enumerate(digits):
-                    rect=np.array([[x+i*pitch,y0],[x+(i+1)*pitch,y0],[x+(i+1)*pitch,y1],[x+i*pitch,y1]],np.float32)
-                    polygon=cv2.perspectiveTransform(rect[None],inverse)[0]
-                    cells.append(dict(digit=d,confidence=c,polygon=polygon.tolist(),
-                        ocr_candidates=[dict(text=t,confidence=s,preprocessing=mode) for mode in all_obs for t,s in all_obs[mode][i]]))
+                cells=_cell_records(digits,all_obs,inverse,x,pitch,y0,y1)
                 text=''.join(d for d,c in digits)
                 integer_known=sum(d!='X' for d,c in digits[:self.integer_digits]);known=sum(d!='X' for d,c in digits)
                 # Quality is a ranking signal, not a calibrated probability.
                 score=integer_known*2+known+geometric_score*.1
                 evaluated.append(dict(score=score,cells=cells,digits=text,deskew_angle=angle,preprocessing=selected,geometry_score=float(geometric_score)))
+                if digit_recognizer is not None:
+                    paddle_inputs=[]
+                    for crop in crops:
+                        gray=cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY)
+                        _,otsu=cv2.threshold(gray,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+                        adaptive=cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                                       cv2.THRESH_BINARY,31,9)
+                        paddle_inputs.extend([crop,cv2.cvtColor(otsu,cv2.COLOR_GRAY2BGR),
+                                              cv2.cvtColor(adaptive,cv2.COLOR_GRAY2BGR)])
+                    paddle_results=list(digit_recognizer.predict(paddle_inputs,batch_size=32))
+                    if len(paddle_results) != count*3:
+                        raise ValueError('Paddle digit recognizer returned an incomplete batch')
+                    paddle_obs=[[(paddle_results[i*3+j]['rec_text'],
+                                  float(paddle_results[i*3+j]['rec_score'])) for j in range(3)]
+                                for i in range(count)]
+                    paddle_digits=[paddle_vote(observations) for observations in paddle_obs]
+                    paddle_text=''.join(digit for digit,_ in paddle_digits)
+                    paddle_integer_known=sum(digit!='X' for digit,_ in paddle_digits[:self.integer_digits])
+                    paddle_known=sum(digit!='X' for digit,_ in paddle_digits)
+                    paddle_score=paddle_integer_known*2+paddle_known+geometric_score*.1
+                    evaluated.append(dict(score=paddle_score,
+                        cells=_cell_records(paddle_digits,{'paddle':paddle_obs},inverse,x,pitch,y0,y1),
+                        digits=paddle_text,deskew_angle=angle,preprocessing='paddle_digit_fallback',
+                        geometry_score=float(geometric_score)))
         if debug is not None:debug.extend(evaluated)
         if not evaluated:return empty_reading()
         best=max(evaluated,key=lambda r:r['score'])

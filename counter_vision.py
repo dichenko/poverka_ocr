@@ -14,7 +14,9 @@ def angles(image):
     edge=cv2.Canny(cv2.cvtColor(small,cv2.COLOR_BGR2GRAY),60,160)
     lines=cv2.HoughLinesP(edge,1,np.pi/180,40,minLineLength=65,maxLineGap=8)
     buckets={}
-    for x1,y1,x2,y2 in ([] if lines is None else lines[:,0]):
+    # OpenCV returns either (N, 1, 4) or (N, 4), depending on the build.
+    # Normalising here keeps the rotated-row fallback valid on both layouts.
+    for x1,y1,x2,y2 in ([] if lines is None else np.asarray(lines).reshape(-1,4)):
         a=np.degrees(np.arctan2(y2-y1,x2-x1)); a=(a+90)%180-90
         a=(a+45)%90-45
         k=round(a/3)*3; buckets[k]=buckets.get(k,0)+np.hypot(x2-x1,y2-y1)
@@ -85,7 +87,8 @@ def clean(crop,trim=.12,threshold='otsu'):
     choices=[]
     for k in range(1,n):
         x,y,cw,ch,area=stats[k];cx,cy=centres[k]
-        if ch>g.shape[0]*.35 and .12*g.shape[1]<cx<.88*g.shape[1] and area<mask.size*.65 and cw<g.shape[1]*.92:
+        if (ch>g.shape[0]*.35 and .12*g.shape[1]<cx<.88*g.shape[1]
+                and area<mask.size*.65 and cw<g.shape[1]*.92):
             choices.append((area,k))
     if not choices:return np.full((96,64),255,np.uint8)
     _,k=max(choices);x,y,cw,ch,area=stats[k]
@@ -94,4 +97,3 @@ def clean(crop,trim=.12,threshold='otsu'):
     tw=min(48,max(12,round(cw*76/ch)));glyph=cv2.resize(glyph,(tw,76))
     canvas=np.full((96,64),255,np.uint8);canvas[10:86,(64-tw)//2:(64-tw)//2+tw]=glyph
     return canvas
-

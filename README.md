@@ -31,8 +31,8 @@ curl https://ocr.poverka-bot.ru/healthz
 Во время инициализации `/healthz` и `/ocr` возвращают `503`.
 
 В контейнере ровно один процесс Uvicorn и один предварительно загруженный набор:
-PaddleOCR для надписей/поиска строки, PaddleOCR для резервного поиска строки и
-EasyOCR для отдельных барабанов. `OCR_WORKERS=1` последовательно выполняет inference, что безопаснее для CPU и не
+PaddleOCR для надписей/поиска строки, EasyOCR для отдельных барабанов и
+PaddleOCR как резервный распознаватель отдельных слабоконтрастных цифр. `OCR_WORKERS=1` последовательно выполняет inference, что безопаснее для CPU и не
 дублирует память моделей. До 100 одновременных HTTP-запросов принимаются в ограниченную
 очередь (`MAX_INFLIGHT_REQUESTS`); следующий получает `429` и заголовок `Retry-After`.
 При достаточных CPU/RAM можно увеличить `OCR_WORKERS`, предварительно проверив
@@ -121,7 +121,7 @@ reprocess.bat --input "D:\Photos" --output "D:\OCR"
 ```powershell
 .\test_readings.bat
 # Или напрямую:
-.\.venv-reader\Scripts\python.exe -X utf8 test_readings_only.py
+.\.venv\Scripts\python.exe -X utf8 test_readings_only.py
 ```
 
 Он каждый раз заново ищет строку и распознаёт снимки из `input`, не читает
@@ -144,7 +144,9 @@ reprocess.bat --input "D:\Photos" --output "D:\OCR"
   окошек задают несколько вариантов разбиения на барабаны.
 - Цифры переводятся в градации серого. Адаптивная и глобальная бинаризация,
   выделение связных компонент и разные вырезки уменьшают влияние теней и рамок.
-- EasyOCR читает отдельные цифры; недостаточно подтверждённые позиции получают `X`.
+- EasyOCR читает отдельные цифры. Для слабоконтрастного шрифта его результат
+  сверяется с PaddleOCR, запущенным на трёх вариантах одного барабана. Недостаточно
+  подтверждённые позиции получают `X`.
 
 **Красные/чёрные маски не используются.** Детектор текста получает исходное цветное
 фото, но правила поиска не привязаны к цвету, а распознавание цифр работает в сером.
@@ -154,18 +156,15 @@ reprocess.bat --input "D:\Photos" --output "D:\OCR"
 число дробных разрядов автоматически и не предназначен для стрелочных шкал.
 На фото с несколькими счётчиками выбирается одна крупная строка, не все приборы.
 
-Первичная подготовка отдельного окружения (в текущей рабочей папке уже выполнена):
+Тест использует то же окружение `.venv`, что и основной сервис. После получения
+новой версии кода один раз обновите зависимости:
 
 ```powershell
-py -3.11 -m venv .venv-reader
-.\.venv-reader\Scripts\python.exe -m pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cpu
-.\.venv-reader\Scripts\python.exe -m pip install -r requirements-reader.txt
-.\.venv-reader\Scripts\python.exe -c "import easyocr; easyocr.Reader(['en'],gpu=False,detector=False,model_storage_directory='models/easyocr',user_network_directory='models/easyocr/user',verbose=False)"
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Окружение `.venv` из основной установки также необходимо для поиска строки через
-PaddleOCR. При необходимости задайте другой интерпретатор: `--seed-python PATH`.
-В `.venv-reader` модель EasyOCR при распознавании **не скачивается автоматически**.
+При необходимости задайте другой интерпретатор для поиска строки: `--seed-python PATH`.
+EasyOCR-модель автоматически загрузится при первом тестовом запуске в `models/easyocr`.
 Фото обрабатываются локально. YOLO и облачные API для нового теста не нужны.
 
 Дополнительно: `--input PATH`, `--debug-dir PATH`, `--no-debug-images`.
@@ -214,7 +213,7 @@ PaddleOCR. При необходимости задайте другой инт�
 | Детекция текста | `PP-OCRv5_mobile_det` |
 | Общее распознавание | `cyrillic_PP-OCRv5_mobile_rec` |
 | Резервный поиск строки цифр | `en_PP-OCRv5_mobile_rec` |
-| Распознавание отдельных барабанов | EasyOCR `english_g2` |
+| Распознавание отдельных барабанов | EasyOCR `english_g2` + резервный `en_PP-OCRv5_mobile_rec` |
 
 При первом запуске модели загружаются в:
 

@@ -77,6 +77,12 @@ def run_ocr(engine, image: np.ndarray):
 
 
 def create_digit_recognizer():
+    # The recognizer can be created without create_engine() in the standalone
+    # reading test, so configure PaddleX's writable cache here as well.
+    os.environ["PADDLE_PDX_CACHE_HOME"] = str(ROOT / "models")
+    os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+    os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "BOS")
+    os.environ.setdefault("GLOG_minloglevel", "2")
     from paddleocr import TextRecognition
     return TextRecognition(model_name=DIGIT_MODEL, device="cpu", enable_mkldnn=False)
 
@@ -151,8 +157,8 @@ def _process_image(source, source_file: str, engine, engine_info: dict, initiali
                 raise RuntimeError(counter_error)
             if counter_reader is not None:
                 seeds = locate_counter_rows(image, items, digit_recognizer)
-                data["meter_reading"] = counter_reader.read(image, seeds)
-                data["meter_reading"]["model"] = "EasyOCR english_g2"
+                data["meter_reading"] = counter_reader.read(image, seeds, digit_recognizer)
+                data["meter_reading"]["model"] = "EasyOCR english_g2 + PaddleOCR digit fallback"
                 data["meter_reading"]["localizer_model"] = DIGIT_MODEL
         except Exception as exc:
             data["meter_reading"] = empty_reading("error", str(exc)[:1500])

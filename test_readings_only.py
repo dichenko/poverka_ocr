@@ -119,7 +119,9 @@ def main(argv=None) -> int:
     if args.backend == "grayscale":
         try:
             from counter_reader import CounterReader
-            reader = CounterReader(ROOT / "models" / "easyocr", args.integer_digits)
+            reader = CounterReader(ROOT / "models" / "easyocr", args.integer_digits,
+                                   download_models=True)
+            digit_recognizer = create_digit_recognizer()
         except (ImportError, FileNotFoundError) as exc:
             parser.error(f"Не готово окружение распознавания: {exc}. См. README; запускайте test_readings.bat")
         if not args.seed_python.is_file():
@@ -146,7 +148,7 @@ def main(argv=None) -> int:
             if seeds is not None:
                 if isinstance(seeds[file.name], dict) and "error" in seeds[file.name]:
                     raise ValueError(seeds[file.name]["error"])
-                reading = reader.read(image, seeds[file.name])
+                reading = reader.read(image, seeds[file.name], digit_recognizer)
             else:
                 items = normalize_ocr_result(run_ocr(engine, image))
                 reading = recognize_reading(image, digit_recognizer, items)
@@ -177,7 +179,7 @@ def main(argv=None) -> int:
                "total_seconds": round(perf_counter() - total_started, 2),
                "criterion": "0 wrong digits and no more than 2 X digits", "results": report,
                "models": {"detection": DETECTION_MODEL, "recognition": RECOGNITION_MODEL,
-                          "digits": "EasyOCR english_g2" if seeds is not None else DIGIT_MODEL}}
+                          "digits": "EasyOCR english_g2 + PaddleOCR digit fallback" if seeds is not None else DIGIT_MODEL}}
     (args.debug_dir / "report.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
                                                   encoding="utf-8")
     labelled = summary['total'] - summary['unlabelled']

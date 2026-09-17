@@ -1,13 +1,14 @@
 """Offline regression checks; no OCR model loading or network access."""
 from pathlib import Path
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import cv2
 import numpy as np
 
-from counter_reader import CounterReader, combine_votes, locate_counter_rows, vote, vote_strength
-from counter_vision import clean, grids, rotate
+from counter_reader import (CounterReader, combine_votes, locate_counter_rows,
+                            paddle_vote, vote, vote_strength)
+from counter_vision import angles, clean, grids, rotate
 from test_readings_only import compare_reading, expected_from_name
 
 
@@ -18,6 +19,11 @@ class CounterTests(unittest.TestCase):
 
     def test_conflicting_strong_predictions_are_unknown(self):
         self.assertEqual(vote([('7', .999), ('1', .99), ('7', .95)])[0], 'X')
+
+    def test_paddle_digit_fallback_accepts_repeated_and_alias_glyphs(self):
+        self.assertEqual(paddle_vote([('I', .82), ('I', .81), ('x', .1)])[0], '1')
+        self.assertEqual(paddle_vote([('4,', .80), ('b', .14), ('4', .97)])[0], '4')
+        self.assertEqual(paddle_vote([('7', .80), ('2', .75), ('x', .2)])[0], 'X')
 
     def test_confirmed_alternate_fills_strict_primary_unknown(self):
         # Regression: a visually clear 3 was found by Otsu three times at 1.0,
@@ -60,6 +66,7 @@ class CounterTests(unittest.TestCase):
                 self.assertTrue(np.all(clean(crop, threshold=mode) == 255))
         self.assertEqual(grids(np.zeros((30, 40, 3), np.uint8), [0, 0, 0, 0]), [])
 
+
     def test_rotation_coordinate_roundtrip(self):
         image = np.zeros((100, 180, 3), np.uint8)
         turned, matrix = rotate(image, -48)
@@ -67,6 +74,14 @@ class CounterTests(unittest.TestCase):
         points = np.array([[[0., 0.], [90., 50.], [179., 99.]]], np.float32)
         roundtrip = cv2.transform(cv2.transform(points, matrix), cv2.invertAffineTransform(matrix))
         np.testing.assert_allclose(roundtrip, points, atol=1e-4)
+
+    def test_angle_detection_accepts_both_opencv_line_layouts(self):
+        image = np.zeros((120, 160, 3), np.uint8)
+        lines = np.array([[10, 10, 110, 10], [10, 20, 110, 20]], np.int32)
+        with patch('counter_vision.cv2.HoughLinesP', return_value=lines):
+            self.assertIn(0, angles(image))
+        with patch('counter_vision.cv2.HoughLinesP', return_value=lines[:, None, :]):
+            self.assertIn(0, angles(image))
 
     def test_no_proposal_does_not_fabricate_digits(self):
         reader = CounterReader.__new__(CounterReader)

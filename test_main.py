@@ -66,7 +66,7 @@ class OCRTests(unittest.TestCase):
 
     def test_new_counter_reader_preserves_general_ocr_contract(self):
         class Reader:
-            def read(self, image, seeds):
+            def read(self, image, seeds, digit_recognizer=None):
                 self.seeds = seeds
                 return {'value': '00123.456', 'status': 'recognized', 'cells': [],
                         'decimal_places': 3, 'digits_count': 8, 'error': None}
@@ -79,7 +79,7 @@ class OCRTests(unittest.TestCase):
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['full_text'], ['СЧЁТЧИК', '№ A-123/45'])
         self.assertEqual(result['meter_reading']['value'], '00123.456')
-        self.assertEqual(result['meter_reading']['model'], 'EasyOCR english_g2')
+        self.assertEqual(result['meter_reading']['model'], 'EasyOCR english_g2 + PaddleOCR digit fallback')
         locator.assert_called_once()
         self.assertEqual(reader.seeds, seeds)
 
